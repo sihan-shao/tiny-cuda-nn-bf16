@@ -2,6 +2,12 @@
 
 This is a small, self-contained framework for training and querying neural networks. Most notably, it contains a lightning fast ["fully fused" multi-layer perceptron](https://raw.githubusercontent.com/NVlabs/tiny-cuda-nn/master/data/readme/fully-fused-mlp-diagram.png) ([technical paper](https://tom94.net/data/publications/mueller21realtime/mueller21realtime.pdf)), a versatile [multiresolution hash encoding](https://raw.githubusercontent.com/NVlabs/tiny-cuda-nn/master/data/readme/multiresolution-hash-encoding-diagram.png) ([technical paper](https://nvlabs.github.io/instant-ngp/assets/mueller2022instant.pdf)), as well as support for various other input encodings, losses, and optimizers.
 
+## FP16-optimized fork
+
+This fork adds FP16-focused extensions for workloads that need lower memory use and faster CUDA neural network execution. The changes are intended for half-precision training and inference experiments, with emphasis on Tensor Core-friendly paths, reduced intermediate memory pressure, and integration with reconstruction pipelines that already operate in FP16 or mixed precision.
+
+The FP16 work is maintained separately from upstream `tiny-cuda-nn` so experimental kernels and precision tradeoffs can evolve without changing the upstream-compatible `main` workflow.
+
 ## Performance
 
 ![Image](data/readme/fully-fused-vs-tensorflow.png)
