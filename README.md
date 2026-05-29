@@ -2,21 +2,53 @@
 
 This is a small, self-contained framework for training and querying neural networks. Most notably, it contains a lightning fast ["fully fused" multi-layer perceptron](https://raw.githubusercontent.com/NVlabs/tiny-cuda-nn/master/data/readme/fully-fused-mlp-diagram.png) ([technical paper](https://tom94.net/data/publications/mueller21realtime/mueller21realtime.pdf)), a versatile [multiresolution hash encoding](https://raw.githubusercontent.com/NVlabs/tiny-cuda-nn/master/data/readme/multiresolution-hash-encoding-diagram.png) ([technical paper](https://nvlabs.github.io/instant-ngp/assets/mueller2022instant.pdf)), as well as support for various other input encodings, losses, and optimizers.
 
-## FP16-optimized fork
+## BF16-optimized fork
 
-This fork adds FP16-focused extensions for workloads that need lower memory use and faster CUDA neural network execution. The changes are intended for half-precision training and inference experiments, with emphasis on Tensor Core-friendly paths, reduced intermediate memory pressure, and integration with reconstruction pipelines that already operate in FP16 or mixed precision.
+This fork adds BF16-focused extensions for workloads that need 16-bit storage with a wider exponent range than FP16. Upstream `tiny-cuda-nn` already supports FP16 through `__half`; this fork focuses on explicit bfloat16 runtime and PyTorch precision paths for reconstruction and neural graphics workloads that benefit from BF16 stability while retaining Tensor Core-friendly execution.
 
-The FP16 work is maintained separately from upstream `tiny-cuda-nn` so experimental kernels and precision tradeoffs can evolve without changing the upstream-compatible `main` workflow.
+The BF16 work is maintained separately from upstream `tiny-cuda-nn` so experimental kernels and precision tradeoffs can evolve without changing the upstream-compatible `main` workflow.
 
-### FP16 usage examples
+### BF16 and FP16 usage examples
 
-With the PyTorch bindings, request FP16 parameters and outputs by passing `dtype=torch.float16` when constructing the module. Inputs remain `torch.float32`, matching the tiny-cuda-nn mixed-precision path; cast outputs to float if the surrounding loss or model expects FP32 math.
+Use `dtype=torch.bfloat16` to request BF16 parameters and outputs with the PyTorch bindings. Inputs remain `torch.float32`, matching the tiny-cuda-nn mixed-precision path; cast outputs to float if the surrounding loss or model expects FP32 math. BF16 requires CUDA BF16 header support and compatible GPU kernels; for `FullyFusedMLP`, use an Ampere-class GPU or newer.
 
 ```python
 import torch
 import tinycudann as tcnn
 
-model = tcnn.NetworkWithInputEncoding(
+model_bf16 = tcnn.NetworkWithInputEncoding(
+    n_input_dims=3,
+    n_output_dims=1,
+    encoding_config={
+        "otype": "HashGrid",
+        "n_levels": 16,
+        "n_features_per_level": 2,
+        "log2_hashmap_size": 19,
+        "base_resolution": 16,
+        "per_level_scale": 2.0,
+    },
+    network_config={
+        "otype": "FullyFusedMLP",
+        "activation": "ReLU",
+        "output_activation": "None",
+        "n_neurons": 64,
+        "n_hidden_layers": 2,
+    },
+    dtype=torch.bfloat16,
+)
+
+x = torch.rand(65536, 3, device="cuda", dtype=torch.float32)
+y_bf16 = model_bf16(x)
+print(y_bf16.dtype)  # torch.bfloat16
+
+loss = torch.nn.functional.mse_loss(y_bf16.float(), torch.zeros_like(y_bf16, dtype=torch.float32))
+loss.backward()
+```
+
+For comparison, upstream FP16 remains available through `dtype=torch.float16`:
+
+```python
+model_fp16 = tcnn.NetworkWithInputEncoding(
     n_input_dims=3,
     n_output_dims=1,
     encoding_config={
@@ -37,15 +69,11 @@ model = tcnn.NetworkWithInputEncoding(
     dtype=torch.float16,
 )
 
-x = torch.rand(65536, 3, device="cuda", dtype=torch.float32)
-y = model(x)
-print(y.dtype)  # torch.float16
-
-loss = torch.nn.functional.mse_loss(y.float(), torch.zeros_like(y, dtype=torch.float32))
-loss.backward()
+y_fp16 = model_fp16(x)
+print(y_fp16.dtype)  # torch.float16
 ```
 
-With the C++ runtime API, request FP16 explicitly through `tcnn::cpp::Precision::Fp16`:
+With the C++ runtime API, request BF16 or FP16 explicitly through `tcnn::cpp::Precision`:
 
 ```cpp
 #include <tiny-cuda-nn/cpp_api.h>
@@ -69,8 +97,12 @@ json network = {
     {"n_hidden_layers", 2},
 };
 
-auto* model = tcnn::cpp::create_network_with_input_encoding(
+auto* model_fp16 = tcnn::cpp::create_network_with_input_encoding(
     3, 1, encoding, network, tcnn::cpp::Precision::Fp16
+);
+
+auto* model_bf16 = tcnn::cpp::create_network_with_input_encoding(
+    3, 1, encoding, network, tcnn::cpp::Precision::Bf16
 );
 ```
 
